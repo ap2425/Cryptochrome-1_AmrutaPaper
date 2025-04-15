@@ -1,7 +1,7 @@
 ---
 title: "Downstream_RNASeq_AnalysisPlusFigures"
 author: "ap2425"
-date: "2024-11-25"
+date: "2025-04-14"
 output:
   html_document:
     code_folding: hide
@@ -33,9 +33,7 @@ fontsize: 25pt
 
 
 
-## Results
-
-### Set up
+## Set up
 
 Setting up R, reading in file with sample info, setting colors for plotting.
 
@@ -47,617 +45,311 @@ library(ggplot2)
 library(dplyr)
 library(RColorBrewer)
 library(kableExtra)
-opts_knit$set(root.dir="/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data")
-```
-
-
-## MOLNG 3971 
-
-```{r eval=F}
-m3971_count.df <- read.table("/n/core/Bioinformatics/secondary/Rohner/as2589/MOLNG-3971.GRCm39.Ens_110/secundo/star_count.csv", sep = ',', as.is = T, header= T, row.names = 1) #load in counts
-
-non_gene_reads.iv <- grepl("^N_", rownames(m3971_count.df)) #find rows of non-gene information
-align_stats <- m3971_count.df[non_gene_reads.iv,]  #save rows in case we need later
-m3971_count.df <- m3971_count.df[!non_gene_reads.iv,]  #remove non-gene info from total count df
-m3971_count.df <- m3971_count.df %>% mutate_if(is.character,as.numeric)
-
-m3971_count.df <- m3971_count.df[,c(1,3,5,6,8,10,11,13,15,16,18,20,2,4,7,9,12,14,17,19)]
-#m3971_count.df <- m3971_count.df[,-12]
-samples <- colnames(m3971_count.df)
-groups <- c(rep("WFL",3), rep("WML",3), rep("MFL",3), rep("MML",3), rep("WFB",2), rep("WMB",2), rep("MFB",2), rep("MMB",2))
-
-sample_ann <- data.frame()
-sample_ann[1:20,1] <- samples
-sample_ann[1:20,2] <- groups
-```
-
-```{r DE analysis, eval = FALSE}
-library(edgeR)
-#table to get gene lengths
-genedata <- read.table("/n/analysis/genomes/Mus_musculus/GRCm39/annotation/Ens_110/tables/GRCm39.Ens_110.gene_data.txt",quote='',header=T,sep='\t',as.is = T)
-lengths <- genedata[,c("Gene_ID","Exonic_Len")]
-normCounts <- data.frame(matrix(NA,nrow = length(m3971_count.df[,1]), ncol = length(samples)))
-edger.rpkm <- data.frame(matrix(NA,nrow=length(m3971_count.df[,1]), ncol=length(samples)))
-#tpm <- read.csv("../data/RSEM_TPM_table.csv", header = T, as.is = T)
-
-#Create DGEObject
-y <- DGEList(counts = m3971_count.df, group = groups)
-
-#Design model that will be used for DE comparisons
-design <- model.matrix(~0+groups, data = y$samples)
-colnames(design) <- levels(y$samples$group)
-
-keep <- filterByExpr(y, design = design)
-y <- y[keep, keep.lib.sizes=FALSE]
-
-
-test_keep_pt <- length(which(keep))/length(m3971_count.df[,1])  #33% of genes kept after filtering by expression
-
-y <- calcNormFactors(y)
-
-#estimate common and tagwise dispersion
-y <- estimateDisp(y,design)
-
-#Grab count per million(cpm) values
-normCounts <- cpm(y, normalized.lib.sizes = TRUE)
-colnames(normCounts) <- paste("cpm.",samples)
-TempNormCounts <- normCounts
-
-#create generalized linear model
-fit <- glmQLFit(y,design)
-
-```
-
-
-### Expression Level Barplots
-
-```{r Making Plots, message = FALSE, warning = FALSE,eval = FALSE}
-library(tidyverse)
 library(reshape2)
-library(ggplot2)
-
-##Expression Level Barplots
-
-temp <- as_tibble(m3971_count.df)
-finite.iv <- apply(temp,2,is.finite)
-temp[!finite.iv] <- NA
-
-temp <- melt(temp)
-temp <- inner_join(temp, sample_ann, by = c("variable" = "V1"))
-colnames(temp)[3] <- c("group")
-
-log2boxplot <- ggplot(temp, aes(x = temp$variable, y=log2(temp$value), fill = temp$group)) +
-  geom_boxplot(outlier.shape = 19)+
-  labs(x = "Sample", y="log2(counts)") +
-  coord_cartesian(ylim = c(0,20)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-ggsave("../data/MOLNG3971/log2boxplot.png", height = 6,width = 6)
-
-temp <- (log2(normCounts))
-finite.iv <- apply(temp,2,is.finite)
-temp[!finite.iv] <- NA
-temp <- melt(temp)
-temp$sample <- str_remove(temp$Var2, "cpm. ")
-temp <- temp %>% inner_join(sample_ann, by = c("sample" = "V1"))
-colnames(temp)[5] <- c("group")
-boxplot <- ggplot(temp, aes(x = temp$Var2, y = (temp$value), fill = temp$group)) +
-  geom_boxplot() +
-  labs( x = "Sample", y = "log2(CPM)") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-ggsave("../data/MOLNG3971/NormalizedBoxplot.png", height = 4, width = 6)
-```
-
-```{r Correlation matrix, message = FALSE, warning = FALSE,eval = FALSE}
-#Heatmap
-
-library(pheatmap)
-
-TempNormCounts[TempNormCounts == 0] <- 0.01
-pmap_Counts <- TempNormCounts
-colnames(pmap_Counts) <- str_remove(colnames(pmap_Counts), "cpm.")
-
-
-png("../data/MOLNG3971/MOLNG3971_FemaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(1:3,7:9)]), method = "spearman"), fontsize = 10)
-         #color = colorRampPalette(c("blue", "white", "red"))(length(scales)))
-dev.off()
-
-png("../data/MOLNG3971/MOLNG3971_MaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(4:6,10:11)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/MOLNG3971/MOLNG3971_FemaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(12:13,16:17)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/MOLNG3971/MOLNG3971_MaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(14:15,18:19)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-
-### Adjusted scale
-scales <- seq(0.980,1, by = 0.0002)
-
-png("../data/AdjustedHeatmaps/MOLNG3971_FemaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(1:3,7:9)]), method = "spearman"), fontsize = 10,breaks = scales)
-         #color = colorRampPalette(c("blue", "white", "red"))(length(scales)))
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3971_MaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(4:6,10:11)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3971_FemaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(12:13,16:17)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3971_MaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(14:15,18:19)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-
-## All Samples
-scales_big <- seq(0.900,1, by = 0.001)
-
-png("../data/Heatmaps/MOLNG3971_AllSamples_corplot_default.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/Heatmaps/MOLNG3971_AllSamples_corplot_manual.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10, breaks = scales_big)
-dev.off()
-
-
-ph_71 <- pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10, breaks = scales_big)
-ph_71[[1]] %>%
- as.dendrogram() %>%
- set("branches_k_color", k=8) %>%
- set("labels_colors", k=8) %>%
- set("branches_lwd", 2) %>%  
- plot(horiz=T, lwd=2)
-```
-
-
-### Differentially Expressed Gene Lists  
-
-```{r eval=F}
-FL <- c(0,1,0,0,0,-1,0,0)
-ML <- c(0,0,0,1,0,0,0,-1)
-FB <- c(1,0,0,0,-1,0,0,0)
-MB <- c(0,0,1,0,0,0,-1,0)
-
-res <- list()
-res[[1]] <- glmQLFTest(fit, contrast = FL)
-res[[2]] <- glmQLFTest(fit, contrast = ML)
-res[[3]] <- glmQLFTest(fit, contrast = FB)
-res[[4]] <- glmQLFTest(fit, contrast = MB)
-
-conts <- c("FL","ML","FB","MB")
-
-summarytable <- data.frame(round(normCounts))
-for(i in 1:length(conts))
-{
-  res[[i]]$table$padj <- p.adjust(res[[i]]$table$PValue, method = "BH")
-  cur <- res[[i]]$table[,2]
-  summarytable <- cbind(summarytable, cur)
-  colnames(summarytable)[ncol(summarytable)] <- paste(conts[i],"logCPM")
-}
-for(i in 1:length(conts))
-{
-  cur <- res[[i]]$table[,c(1,4,5)]
-  summarytable <- cbind(summarytable, cur)
-  colnames(summarytable)[(ncol(summarytable)-2) :ncol(summarytable)] <- paste(c(paste(rep(conts[i],each=3), rep(c(".log2fc",".pval",".padj"), times = 1), sep = '')))
-}
-
-rownames(summarytable) <- rownames(y$counts)
-
-summarytable.ann <- data.frame(ensid = rownames(summarytable), genedata[match(rownames(summarytable), genedata[,1]),c("Name","Chrom","Start","End","Strand","Biotype")], summarytable[,1:length(summarytable[1,])])  #add gene annotation info to summary table
-rownames(summarytable.ann) <- paste(summarytable.ann$Name,"(",summarytable.ann$ensid,")") 
-summarytable.ann.sort <- summarytable.ann[order(summarytable.ann[,"MB.padj"]),] #order by most significant adjusted pval
-
-write.table(summarytable.ann.sort,"../data/MOLNG3971.summary_genes.tsv",sep = '\t', quote = F, row.names = F)
-system("cp ../data/MOLNG3971.summary_genes.tsv ../results/")
-
-#Find the DE genes
-
-ups <- list()
-dns <- list()
-
-for(i in 1:length(conts))
-{
-  
-  iv.ups<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] >= log2(2)
-  iv.dn<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] <= -log2(2)
-  
-  ups[[i]] <- iv.ups
-  dns[[i]] <- iv.dn
-  write.table(summarytable.ann.sort[iv.ups,], paste("../results/MOLNG3971_DE_",conts[i],".de.up.txt",sep=''), sep = '\t', quote =F, row.names = F)
-  write.table(summarytable.ann.sort[iv.dn,], paste("../results/MOLNG3971_DE_",conts[i],".de.dn.txt",sep=''), sep = '\t', quote =F, row.names = F)
-  
-}
-
-names(ups) <- names(dns) <- conts
-saveRDS(dns,"../data/MOLNG3971_Dns.rds")
-saveRDS(ups,"../data/MOLNG3971_Ups.rds")
-```
-
-
-### DE Barplot(+/- Comparison)
-
-```{r warning = FALSE,eval = FALSE}
-#Number of DE Genes
-library(dplyr)
-uplens <- unlist(lapply(ups,function(x){length(which(x))}))
-dnlens <- -1*unlist(lapply(dns,function(x){length(which(x))}))
-uplens.t <- as_tibble(uplens)
-dnlens.t <- as.tibble(dnlens)
-barplot.t <- NULL
-barplot.t <- rbind(dnlens.t, uplens.t)
-barplot.t <- barplot.t %>% rename("count" = "value")
-#barplot.t <- barplot.t %>% rename("value" = "count")
-conts_combined <- c(conts[], conts[])
-barplot.t <- add_column(barplot.t, Sample_Group = conts_combined)
-
-
-barplot.t <- add_column(barplot.t, group = as.character(barplot.t$count > 0))
-barplot.t <- barplot.t %>% mutate(group = recode(group, 'FALSE' = 'Down', 'TRUE' = 'Up'))
-#barplot.t <- barplot.t %>% arrange(desc(count))
-
-barplot.de <- ggplot(barplot.t, aes(x = Sample_Group, y = count, fill = group)) +
-  guides(fill = guide_legend(reverse = TRUE)) +
-  geom_bar(stat = "identity", position = "identity") + labs(title = "Number of DE Genes", fill = element_blank()) +
-  geom_hline(yintercept = 0, color = "white") + scale_y_discrete(limits = c(-200,-100,-50,0,50,100,200)) +
-  coord_cartesian(ylim = c(-250,250)) + labs(x = "Comparisons", y = "Number of Genes") +
-  theme(axis.text.x = element_text(angle = 75, hjust = 1))
-
-ggsave("../data/MOLNG3971_DE.Barplot.png", height = 6, width = 6)
-```
-
-
-
-## MOLNG 3985  
-
-
-```{r eval=F}
-m3985_count.df <- read.table("/n/core/Bioinformatics/secondary/Rohner/as2589/MOLNG-3985.GRCm39.Ens_110/secundo/star_count.csv", sep = ',', as.is = T, header= T, row.names = 1) #load in counts
-
-non_gene_reads.iv <- grepl("^N_", rownames(m3985_count.df)) #find rows of non-gene information
-align_stats <- m3985_count.df[non_gene_reads.iv,]  #save rows in case we need later
-m3985_count.df <- m3985_count.df[!non_gene_reads.iv,]  #remove non-gene info from total count df
-m3985_count.df <- m3985_count.df %>% mutate_if(is.character,as.numeric)
-
-m3985_count.df <- m3985_count.df[,c(14,16,18,20,22,24,2,4,8,6,10,12,13,15,17,19,21,23,1,3,7,5,9,11)]
-samples <- colnames(m3985_count.df)
-groups <- c(rep("WFL",4), rep("WML",2), rep("MFL",3), rep("MML",3), rep("WFB",4), rep("WMB",2), rep("MFB",3), rep("MMB",3))
-
-sample_ann <- data.frame()
-sample_ann[1:24,1] <- samples
-sample_ann[1:24,2] <- groups
-```
-
-```{r eval = FALSE}
 library(edgeR)
-#table to get gene lengths
-genedata <- read.table("/n/analysis/genomes/Mus_musculus/GRCm39/annotation/Ens_110/tables/GRCm39.Ens_110.gene_data.txt",quote='',header=T,sep='\t',as.is = T)
-lengths <- genedata[,c("Gene_ID","Exonic_Len")]
-normCounts <- data.frame(matrix(NA,nrow = length(m3985_count.df[,1]), ncol = length(samples)))
-edger.rpkm <- data.frame(matrix(NA,nrow=length(m3985_count.df[,1]), ncol=length(samples)))
-#tpm <- read.csv("../data/RSEM_TPM_table.csv", header = T, as.is = T)
-
-#Create DGEObject
-y <- DGEList(counts = m3985_count.df, group = groups)
-
-#Design model that will be used for DE comparisons
-design <- model.matrix(~0+groups, data = y$samples)
-colnames(design) <- levels(y$samples$group)
-
-keep <- filterByExpr(y, design = design)
-y <- y[keep, keep.lib.sizes=FALSE]
-
-
-test_keep_pt <- length(which(keep))/length(m3985_count.df[,1])  #33% of genes kept after filtering by expression
-
-y <- calcNormFactors(y)
-
-#estimate common and tagwise dispersion
-y <- estimateDisp(y,design)
-
-#Grab count per million(cpm) values
-normCounts <- cpm(y, normalized.lib.sizes = TRUE)
-colnames(normCounts) <- paste("cpm.",samples)
-TempNormCounts <- normCounts
-
-#create generalized linear model
-fit <- glmQLFit(y,design)
-
-```
-
-
-### Expression Level Barplots
-
-```{r message = FALSE, warning = FALSE,eval = FALSE}
-library(tidyverse)
-library(reshape2)
-library(ggplot2)
-
-##Expression Level Barplots
-
-temp <- as_tibble(m3985_count.df)
-finite.iv <- apply(temp,2,is.finite)
-temp[!finite.iv] <- NA
-
-temp <- melt(temp)
-temp <- inner_join(temp, sample_ann, by = c("variable" = "V1"))
-colnames(temp)[3] <- c("group")
-
-log2boxplot <- ggplot(temp, aes(x = temp$variable, y=log2(temp$value), fill = temp$group)) +
-  geom_boxplot(outlier.shape = 19)+
-  labs(x = "Sample", y="log2(counts)") +
-  coord_cartesian(ylim = c(0,20)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-ggsave("../data/MOLNG3985/log2boxplot.png", height = 6,width = 6)
-
-temp <- (log2(normCounts))
-finite.iv <- apply(temp,2,is.finite)
-temp[!finite.iv] <- NA
-temp <- melt(temp)
-temp$sample <- str_remove(temp$Var2, "cpm. ")
-temp <- temp %>% inner_join(sample_ann, by = c("sample" = "V1"))
-colnames(temp)[5] <- c("group")
-boxplot <- ggplot(temp, aes(x = temp$Var2, y = (temp$value), fill = temp$group)) +
-  geom_boxplot() +
-  labs( x = "Sample", y = "log2(CPM)") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-ggsave("../data/MOLNG3985/NormalizedBoxplot.png", height = 4, width = 6)
-```
-
-```{r message = FALSE, warning = FALSE,eval = FALSE}
-#Heatmap
-
-library(pheatmap)
-
-TempNormCounts[TempNormCounts == 0] <- 0.01
-pmap_Counts <- TempNormCounts
-colnames(pmap_Counts) <- str_remove(colnames(pmap_Counts), "cpm.")
-
-png("../data/MOLNG3985/MOLNG3985_FemaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(1:4,7:9)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/MOLNG3985/MOLNG3985_MaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(5:6,10:12)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/MOLNG3985/MOLNG3985_FemaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(13:16,19:21)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/MOLNG3985/MOLNG3985_MaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(17:18,22:24)]), method = "spearman"), fontsize = 10)
-dev.off()
-
-
-### Adjusted scale
-scales <- seq(0.980,1, by = 0.0002)
-
-png("../data/AdjustedHeatmaps/MOLNG3985_FemaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(1:4,7:9)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3985_MaleLiver_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(5:6,10:12)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3985_FemaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(13:16,19:21)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-png("../data/AdjustedHeatmaps/MOLNG3985_MaleBrain_corplot.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,c(17:18,22:24)]), method = "spearman"), fontsize = 10, breaks = scales)
-dev.off()
-
-
-## All 
-
-png("../data/Heatmaps/MOLNG3985_AllSamples_corplot_default.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10)
-dev.off()
-
-png("../data/Heatmaps/MOLNG3985_AllSamples_corplot_manual.png",width = 1200, height = 1000, pointsize = 16)
-pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10, breaks = scales_big)
-dev.off()
-
-ph_85 <- pheatmap(cor(log2(pmap_Counts[,]), method = "spearman"), fontsize = 10, breaks = scales_big)
-
-png("../data/Heatmaps/MOLNG3985_AllSamples_dendrogram.png",width = 1600, height = 1600, pointsize = 16)
-ph_85[[1]] %>%
- as.dendrogram() %>%
- set("branches_k_color", k=8) %>%
- set("labels_colors", k=8) %>%
- set("branches_lwd", 2) %>%  
- plot(horiz=T, lwd=2)
-dev.off()
-
-png("../data/Heatmaps/MOLNG3971_AllSamples_dendrogram.png",width = 1600, height = 1600, pointsize = 16)
-ph_71[[1]] %>%
- as.dendrogram() %>%
- set("branches_k_color", k=8) %>%
- set("labels_colors", k=8) %>%
- set("branches_lwd", 2) %>%  
- plot(horiz=T, lwd=2)
-dev.off()
-
-library(factoextra)
-norm_pca <- prcomp(t(normCounts), center = T, scale. = T)
-
-#fviz_pca_ind(norm_pca, col.ind = "cos2", # Color by the quality of representation
-#gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-#repel = TRUE)     # Avoid text overlapping
-#ggsave("../data/CPMCounts_PCAplot.png", width = 10)
-
-
-fviz_pca_ind(norm_pca, col.ind = groups)  
-
-fviz_pca_ind(norm_pca, geom="point", col.ind = groups, pointsize = 2, pointshape = "circle") + theme_bw()
-ggsave("../data/Heatmaps/MOLNG3985_PCA.png", height = 8, width = 8)
-```
-
-
-
-### Differentially Expressed Gene Lists  
-
-```{r eval=F}
-FL <- c(0,1,0,0,0,-1,0,0)
-ML <- c(0,0,0,1,0,0,0,-1)
-FB <- c(1,0,0,0,-1,0,0,0)
-MB <- c(0,0,1,0,0,0,-1,0)
-
-res <- list()
-res[[1]] <- glmQLFTest(fit, contrast = FL)
-res[[2]] <- glmQLFTest(fit, contrast = ML)
-res[[3]] <- glmQLFTest(fit, contrast = FB)
-res[[4]] <- glmQLFTest(fit, contrast = MB)
-
-conts <- c("FL","ML","FB","MB")
-
-summarytable <- data.frame(round(normCounts))
-for(i in 1:length(conts))
-{
-  res[[i]]$table$padj <- p.adjust(res[[i]]$table$PValue, method = "BH")
-  cur <- res[[i]]$table[,2]
-  summarytable <- cbind(summarytable, cur)
-  colnames(summarytable)[ncol(summarytable)] <- paste(conts[i],"logCPM")
-}
-for(i in 1:length(conts))
-{
-  cur <- res[[i]]$table[,c(1,4,5)]
-  summarytable <- cbind(summarytable, cur)
-  colnames(summarytable)[(ncol(summarytable)-2) :ncol(summarytable)] <- paste(c(paste(rep(conts[i],each=3), rep(c(".log2fc",".pval",".padj"), times = 1), sep = '')))
-}
-
-rownames(summarytable) <- rownames(y$counts)
-
-summarytable.ann <- data.frame(ensid = rownames(summarytable), genedata[match(rownames(summarytable), genedata[,1]),c("Name","Chrom","Start","End","Strand","Biotype")], summarytable[,1:length(summarytable[1,])])  #add gene annotation info to summary table
-rownames(summarytable.ann) <- paste(summarytable.ann$Name,"(",summarytable.ann$ensid,")") 
-summarytable.ann.sort <- summarytable.ann[order(summarytable.ann[,"MB.padj"]),] #order by most significant adjusted pval
-
-write.table(summarytable.ann.sort,"../data/MOLNG3985.summary_genes.tsv",sep = '\t', quote = F, row.names = F)
-system("cp ../data/MOLNG3985.summary_genes.tsv ../results/")
-
-#Find the DE genes
-
-ups <- list()
-dns <- list()
-
-for(i in 1:length(conts))
-{
-  
-  iv.ups<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] >= log2(2)
-  iv.dn<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] <= -log2(2)
-  
-  ups[[i]] <- iv.ups
-  dns[[i]] <- iv.dn
-  write.table(summarytable.ann.sort[iv.ups,], paste("../results/MOLNG3985_DE_",conts[i],".de.up.txt",sep=''), sep = '\t', quote =F, row.names = F)
-  write.table(summarytable.ann.sort[iv.dn,], paste("../results/MOLNG3985_DE_",conts[i],".de.dn.txt",sep=''), sep = '\t', quote =F, row.names = F)
-  
-}
-
-names(ups) <- names(dns) <- conts
-saveRDS(dns,"../data/MOLNG3985_Dns.rds")
-saveRDS(ups,"../data/MOLNG3985_Ups.rds")
-```
-
-MOLNG3985 DE Genes Table:  
-[MOLNG3985_DE](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data/MOLNG3985.summary_genes.tsv)  
-
-[MOLNG3985_FL_Up](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_FL.de.up.txt)    
-[MOLNG3985_FL_Dn](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_FL.de.dn.txt)    
-
-[MOLNG3985_ML_Up](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_ML.de.up.txt)    
-[MOLNG3985_ML_Dn](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_ML.de.dn.txt)    
-
-[MOLNG3985_FB_Up](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_FB.de.up.txt)    
-[MOLNG3985_FB_Dn](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_FB.de.dn.txt)    
-
-[MOLNG3985_MB_Up](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_MB.de.up.txt)    
-[MOLNG3985_MB_Dn](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/results/MOLNG3985_DE_MB.de.dn.txt)  
-
-
-### DE Barplot(+/- Comparison)
-
-```{r warning = FALSE,eval = FALSE}
-#Number of DE Genes
-library(dplyr)
-uplens <- unlist(lapply(ups,function(x){length(which(x))}))
-dnlens <- -1*unlist(lapply(dns,function(x){length(which(x))}))
-uplens.t <- as_tibble(uplens)
-dnlens.t <- as.tibble(dnlens)
-barplot.t <- NULL
-barplot.t <- rbind(dnlens.t, uplens.t)
-barplot.t <- barplot.t %>% rename("count" = "value")
-#barplot.t <- barplot.t %>% rename("value" = "count")
-conts_combined <- c(conts[], conts[])
-barplot.t <- add_column(barplot.t, Sample_Group = conts_combined)
-
-
-barplot.t <- add_column(barplot.t, group = as.character(barplot.t$count > 0))
-barplot.t <- barplot.t %>% mutate(group = recode(group, 'FALSE' = 'Down', 'TRUE' = 'Up'))
-#barplot.t <- barplot.t %>% arrange(desc(count))
-
-barplot.de <- ggplot(barplot.t, aes(x = Sample_Group, y = count, fill = group)) +
-  guides(fill = guide_legend(reverse = TRUE)) +
-  geom_bar(stat = "identity", position = "identity") + labs(title = "Number of DE Genes", fill = element_blank()) +
-  geom_hline(yintercept = 0, color = "white") + scale_y_discrete(limits = c(-200,-100,-50,0,50,100,200)) +
-  coord_cartesian(ylim = c(-250,250)) + labs(x = "Comparisons", y = "Number of Genes") +
-  theme(axis.text.x = element_text(angle = 75, hjust = 1))
-
-ggsave("../data/MOLNG3985_DE.Barplot.png", height = 6, width = 6)
-```
-
-## Volcano Plots
-
-Folder containing all volcano plots for each of the contrasts, significant DE-down genes are colored blue and DE-up genes are colored red. Horizontal lines at the threshold for p-adjusted of 0.05 and vertical lines for log2FC of -1 and 1 were added to the plots.
-
-```{r eval=F}
-summary_71 <- read.delim("/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data/MOLNG3971.summary_genes.tsv", header = T, sep = '\t')
-summary_85 <- read.delim("/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data/MOLNG3985.summary_genes.tsv", header = T, sep = '\t')
-
-ggplot(summary_71, aes(x = FL.log2fc, y = -1 * log10(FL.padj))) + geom_point(aes(color = ifelse((FL.log2fc < -1) & (FL.padj < 0.05), "blue", ifelse((FL.log2fc > 1) & (FL.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3971 - FemaleLiver")
-ggsave("../data/volcano/MOLNG3971_FemaleLiver_volcano.png", height = 10, width = 10)
-
-ggplot(summary_71, aes(x = ML.log2fc, y = -1 * log10(ML.padj))) + geom_point(aes(color = ifelse((ML.log2fc < -1) & (ML.padj < 0.05), "blue", ifelse((ML.log2fc > 1) & (ML.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3971 - MaleLiver")
-ggsave("../data/volcano/MOLNG3971_MaleLiver_volcano.png", height = 10, width = 10)
-
-ggplot(summary_71, aes(x = FB.log2fc, y = -1 * log10(FB.padj))) + geom_point(aes(color = ifelse((FB.log2fc < -1) & (FB.padj < 0.05), "blue", ifelse((FB.log2fc > 1) & (FB.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3971 - FemaleBrain")
-ggsave("../data/volcano/MOLNG3971_FemaleBrain_volcano.png", height = 10, width = 10)
-
-ggplot(summary_71, aes(x = MB.log2fc, y = -1 * log10(MB.padj))) + geom_point(aes(color = ifelse((MB.log2fc < -1) & (MB.padj < 0.05), "blue", ifelse((MB.log2fc > 1) & (MB.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3971 - MaleBrain")
-ggsave("../data/volcano/MOLNG3971_MaleBrain_volcano.png", height = 10, width = 10)
-
-#####
-
-ggplot(summary_85, aes(x = FL.log2fc, y = -1 * log10(FL.padj))) + geom_point(aes(color = ifelse((FL.log2fc < -1) & (FL.padj < 0.05), "blue", ifelse((FL.log2fc > 1) & (FL.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3985 - FemaleLiver")
-ggsave("../data/volcano/MOLNG3985_FemaleLiver_volcano.png", height = 10, width = 10)
-
-ggplot(summary_85, aes(x = ML.log2fc, y = -1 * log10(ML.padj))) + geom_point(aes(color = ifelse((ML.log2fc < -1) & (ML.padj < 0.05), "blue", ifelse((ML.log2fc > 1) & (ML.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3985 - MaleLiver")
-ggsave("../data/volcano/MOLNG3985_MaleLiver_volcano.png", height = 10, width = 10)
-
-ggplot(summary_85, aes(x = FB.log2fc, y = -1 * log10(FB.padj))) + geom_point(aes(color = ifelse((FB.log2fc < -1) & (FB.padj < 0.05), "blue", ifelse((FB.log2fc > 1) & (FB.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3975 - FemaleBrain")
-ggsave("../data/volcano/MOLNG3985_FemaleBrain_volcano.png", height = 10, width = 10)
-
-ggplot(summary_85, aes(x = MB.log2fc, y = -1 * log10(MB.padj))) + geom_point(aes(color = ifelse((MB.log2fc < -1) & (MB.padj < 0.05), "blue", ifelse((MB.log2fc > 1) & (MB.padj < 0.05), "red", "black")))) + geom_hline(yintercept = -1 * log10(0.05)) + geom_vline(xintercept = -1) + geom_vline(xintercept = 1) + scale_color_identity() + ggtitle("MOLNG3985 - MaleBrain")
-ggsave("../data/volcano/MOLNG3985_MaleBrain_volcano.png", height = 10, width = 10)
-```
-
-[VolcanoPlots](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data/volcano)
-
-
-## GO Terms
-
-For each of the contrasts, GO Term enrichment for Biological Processes was completed for the DE-Dn and DE-Up genes separately. GO Terms were filtered based on an adjusted p-value of 0.05. In the below folder, there is a table with all the stat values and a barplot showing the top -1 * log10(p.adj) scores for the top 10 signficant (or up to how many significant terms we have if it's less than 0)
-
-```{r eval=F}
-library(clusterProfiler)
 library(org.Mm.eg.db)
+library(factoextra)
+library(pheatmap)
 library(RColorBrewer)
-des <- list(fl_up_71,fl_up_85,fl_dn_71,fl_dn_85,ml_up_71,ml_up_85,ml_dn_71,ml_dn_85,fb_up_71,fb_up_85,fb_dn_71,fb_dn_85,mb_up_71,mb_up_85,mb_dn_71,mb_dn_85)
-de_names <- c("fl_up_71","fl_up_85","fl_dn_71","fl_dn_85","ml_up_71","ml_up_85","ml_dn_71","ml_dn_85","fb_up_71","fb_up_85","fb_dn_71","fb_dn_85","mb_up_71","mb_up_85","mb_dn_71","mb_dn_85")
+library(clusterProfiler)
+```
+
+## Read-in Counts
+
+For the group annotations, the descriptions follow this pattern [ABC], where:  
+
+A is genotype, M for mutant, W for wildtype  
+B is sex, M for male, F for female  
+C is tissue, B for brain, L for liver  
+
+So MFB would be Mutant Female Brain Samples  
+
+```{r eval=F}
+night_count_df <- read.delim("./DarkOnset_counts.csv", sep = ',', header = T)
+night_ann <- read.delim("./DarkOnset_groups.txt", sep = '\t', header = T)
+night_ann$sample <- toupper(night_ann$sample %>% str_replace("s_",""))
+night_ann$batch <- "new"
+night_ann$batch[as.numeric(str_extract(night_ann$sample,"[0-9]+")) <= 1290] <- "old"
+rownames(night_count_df) <- night_count_df$X
+night_count_df <- night_count_df %>% select(-c(X))
+
+morning_count_df <- read.delim("./LightOnset_counts.csv", sep = ',', header = T)
+morning_ann <- read.delim("./LightOnset_groups.txt", sep = '\t', header = T)
+morning_ann$sample <- toupper(morning_ann$sample %>% str_replace("s_",""))
+morning_ann$batch <- "new"
+morning_ann$batch[grepl("NR12",morning_ann$sample)] <- "old"
+rownames(morning_count_df) <- morning_count_df$X
+morning_count_df <- morning_count_df %>% select(-c(X))
+
+genedata <- read.table("GRCm39.Ens_110.gene_data.txt",quote='',header=T,sep='\t',as.is = T)
+```
+
+
+
+## DarkOnset Analysis
+
+
+### Differential Expression - Blocking
+
+```{r eval=F}
+samples <- nrow(night_ann)
+normCounts <- data.frame(matrix(NA,nrow = length(night_count_df[,1]), ncol = length(samples)))
+edger.rpkm <- data.frame(matrix(NA,nrow=length(night_count_df[,1]), ncol=length(samples)))
+
+#Create DGEObject
+y <- DGEList(counts = night_count_df, group = night_ann$group)
+
+#Design model that will be used for DE comparisons
+design <- model.matrix(~0+night_ann$group, data = y$samples)
+colnames(design) <- levels(y$samples$group)
+
+keep <- filterByExpr(y, design = design)
+y <- y[keep, keep.lib.sizes=FALSE]
+
+
+test_keep_pt <- length(which(keep))/length(night_count_df[,1])  #30% of genes kept after filtering by expression
+
+y <- calcNormFactors(y)
+
+#estimate common and tagwise dispersion
+y <- estimateDisp(y,design)
+
+#Grab count per million(cpm) values
+normCounts <- cpm(y, normalized.lib.sizes = TRUE)
+colnames(normCounts) <- paste("cpm.",night_ann$sample)
+TempNormCounts <- normCounts
+
+#create generalized linear model
+fit <- glmQLFit(y,design)
+```
+
+
+```{r eval=F}
+y <- DGEList(counts = night_count_df, group = night_ann$group)
+
+#Design model that will be used for DE comparisons
+treatment <- factor(night_ann$group)
+batch <- factor(night_ann$batch)
+blocked_design <- model.matrix(~batch + treatment)
+
+keep <- filterByExpr(y, design = blocked_design)
+y <- y[keep, keep.lib.sizes=FALSE]
+
+
+test_keep_pt <- length(which(keep))/length(night_count_df[,1])  #30% of genes kept after filtering by expression
+
+y <- calcNormFactors(y)
+
+#estimate common and tagwise dispersion
+y <- estimateDisp(y,blocked_design)
+
+#Grab count per million(cpm) values
+normCounts <- cpm(y, normalized.lib.sizes = TRUE)
+colnames(normCounts) <- paste("cpm.",night_ann$sample)
+TempNormCounts <- normCounts
+
+#create generalized linear model
+fit <- glmQLFit(y,blocked_design)
+
+FL <- c(0,0,1,0,0,0,-1,0,0)
+ML <- c(0,0,0,0,1,0,0,0,-1)
+#FB <- c(0,0,1,0,0,0,-1,0,0)
+MB <- c(0,0,0,1,0,0,0,-1,0)
+
+res <- list()
+res[[1]] <- glmQLFTest(fit, contrast = FL)
+res[[2]] <- glmQLFTest(fit, contrast = ML)
+res[[3]] <- glmQLFTest(fit, coef = 6)
+res[[4]] <- glmQLFTest(fit, contrast = MB)
+
+conts <- c("FL","ML","FB","MB")
+
+summarytable <- data.frame(round(normCounts))
+for(i in 1:length(conts))
+{
+  res[[i]]$table$padj <- p.adjust(res[[i]]$table$PValue, method = "BH")
+  cur <- res[[i]]$table[,2]
+  summarytable <- cbind(summarytable, cur)
+  colnames(summarytable)[ncol(summarytable)] <- paste(conts[i],"logCPM")
+}
+for(i in 1:length(conts))
+{
+  cur <- res[[i]]$table[,c(1,4,5)]
+  summarytable <- cbind(summarytable, cur)
+  colnames(summarytable)[(ncol(summarytable)-2) :ncol(summarytable)] <- paste(c(paste(rep(conts[i],each=3), rep(c(".log2fc",".pval",".padj"), times = 1), sep = '')))
+}
+
+rownames(summarytable) <- rownames(y$counts)
+
+summarytable.ann <- data.frame(ensid = rownames(summarytable), genedata[match(rownames(summarytable), genedata[,1]),c("Name","Chrom","Start","End","Strand","Biotype")], summarytable[,1:length(summarytable[1,])])  #add gene annotation info to summary table
+rownames(summarytable.ann) <- paste(summarytable.ann$Name,"(",summarytable.ann$ensid,")") 
+summarytable.ann.sort <- summarytable.ann[order(summarytable.ann[,"MB.padj"]),] #order by most significant adjusted pval
+
+write.table(summarytable.ann.sort,"Blocked_Night_summary_genes.tsv",sep = '\t', quote = F, row.names = F)
+
+#Find the DE genes
+ups <- list()
+dns <- list()
+
+for(i in 1:length(conts))
+{
+  
+  iv.ups<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] >= log2(1.5)
+  iv.dn<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] <= -log2(1.5)
+  
+  ups[[i]] <- iv.ups
+  dns[[i]] <- iv.dn
+  write.table(summarytable.ann.sort[iv.ups,], paste("Blocked_Night_DE_",conts[i],".de.up.txt",sep=''), sep = '\t', quote =F, row.names = F)
+  write.table(summarytable.ann.sort[iv.dn,], paste("Blocked_Night_DE_",conts[i],".de.dn.txt",sep=''), sep = '\t', quote =F, row.names = F)
+  
+}
+```
+
+## LightOnset Analysis
+
+### Differential Expression - Blocking
+
+
+```{r eval=F}
+samples <- nrow(morning_ann)
+normCounts <- data.frame(matrix(NA,nrow = length(morning_count_df[,1]), ncol = length(samples)))
+edger.rpkm <- data.frame(matrix(NA,nrow=length(morning_count_df[,1]), ncol=length(samples)))
+#tpm <- read.csv("../data/RSEM_TPM_table.csv", header = T, as.is = T)
+
+#Create DGEObject
+y <- DGEList(counts = morning_count_df, group = morning_ann$group)
+
+#Design model that will be used for DE comparisons
+design <- model.matrix(~0+morning_ann$group, data = y$samples)
+colnames(design) <- levels(y$samples$group)
+
+keep <- filterByExpr(y, design = design)
+y <- y[keep, keep.lib.sizes=FALSE]
+
+
+test_keep_pt <- length(which(keep))/length(morning_count_df[,1])  #30% of genes kept after filtering by expression
+
+y <- calcNormFactors(y)
+
+#estimate common and tagwise dispersion
+y <- estimateDisp(y,design)
+
+#Grab count per million(cpm) values
+normCounts <- cpm(y, normalized.lib.sizes = TRUE)
+colnames(normCounts) <- paste("cpm.",morning_ann$sample)
+TempNormCounts <- normCounts
+
+#create generalized linear model
+fit <- glmQLFit(y,design)
+```
+
+
+```{r eval=F}
+y <- DGEList(counts = morning_count_df, group = morning_ann$group)
+
+#Design model that will be used for DE comparisons
+treatment <- factor(morning_ann$group)
+batch <- factor(morning_ann$batch)
+blocked_design <- model.matrix(~batch + treatment)
+
+keep <- filterByExpr(y, design = blocked_design)
+y <- y[keep, keep.lib.sizes=FALSE]
+
+
+test_keep_pt <- length(which(keep))/length(morning_count_df[,1])  #30% of genes kept after filtering by expression
+
+y <- calcNormFactors(y)
+
+#estimate common and tagwise dispersion
+y <- estimateDisp(y,blocked_design)
+
+#Grab count per million(cpm) values
+normCounts <- cpm(y, normalized.lib.sizes = TRUE)
+colnames(normCounts) <- paste("cpm.",morning_ann$sample)
+TempNormCounts <- normCounts
+
+#create generalized linear model
+fit <- glmQLFit(y,blocked_design)
+
+FL <- c(0,0,1,0,0,0,-1,0,0)
+ML <- c(0,0,0,0,1,0,0,0,-1)
+#FB <- c(0,0,1,0,0,0,-1,0,0)
+MB <- c(0,0,0,1,0,0,0,-1,0)
+
+res <- list()
+res[[1]] <- glmQLFTest(fit, contrast = FL)
+res[[2]] <- glmQLFTest(fit, contrast = ML)
+res[[3]] <- glmQLFTest(fit, coef = 6)
+res[[4]] <- glmQLFTest(fit, contrast = MB)
+
+conts <- c("FL","ML","FB","MB")
+
+summarytable <- data.frame(round(normCounts))
+for(i in 1:length(conts))
+{
+  res[[i]]$table$padj <- p.adjust(res[[i]]$table$PValue, method = "BH")
+  cur <- res[[i]]$table[,2]
+  summarytable <- cbind(summarytable, cur)
+  colnames(summarytable)[ncol(summarytable)] <- paste(conts[i],"logCPM")
+}
+for(i in 1:length(conts))
+{
+  cur <- res[[i]]$table[,c(1,4,5)]
+  summarytable <- cbind(summarytable, cur)
+  colnames(summarytable)[(ncol(summarytable)-2) :ncol(summarytable)] <- paste(c(paste(rep(conts[i],each=3), rep(c(".log2fc",".pval",".padj"), times = 1), sep = '')))
+}
+
+rownames(summarytable) <- rownames(y$counts)
+
+summarytable.ann <- data.frame(ensid = rownames(summarytable), genedata[match(rownames(summarytable), genedata[,1]),c("Name","Chrom","Start","End","Strand","Biotype")], summarytable[,1:length(summarytable[1,])])  #add gene annotation info to summary table
+rownames(summarytable.ann) <- paste(summarytable.ann$Name,"(",summarytable.ann$ensid,")") 
+summarytable.ann.sort <- summarytable.ann[order(summarytable.ann[,"MB.padj"]),] #order by most significant adjusted pval
+
+write.table(summarytable.ann.sort,"Blocked_Morning_summary_genes.tsv",sep = '\t', quote = F, row.names = F)
+
+#Find the DE genes
+
+ups <- list()
+dns <- list()
+
+for(i in 1:length(conts))
+{
+  
+  iv.ups<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] >= log2(1.5)
+  iv.dn<-summarytable.ann.sort[,paste(conts[i],".padj",sep='')] < .05 & summarytable.ann.sort[,paste(conts[i],".log2fc",sep='')] <= -log2(1.5)
+  
+  ups[[i]] <- iv.ups
+  dns[[i]] <- iv.dn
+  write.table(summarytable.ann.sort[iv.ups,], paste("Blocked_Morning_DE_",conts[i],".de.up.txt",sep=''), sep = '\t', quote =F, row.names = F)
+  write.table(summarytable.ann.sort[iv.dn,], paste("Blocked_Morning_DE_",conts[i],".de.dn.txt",sep=''), sep = '\t', quote =F, row.names = F)
+  
+}
+
+```
+
+## GO-Term Enrichment
+
+```{r eval=F}
+blocked_night_fl_dn <- read.delim("Blocked_Night_DE_FL.de.dn.txt", sep = '\t')  
+blocked_night_fl_up <- read.delim("Blocked_Night_DE_FL.de.up.txt", sep = '\t')
+blocked_night_ml_dn <- read.delim("Blocked_Night_DE_ML.de.dn.txt", sep = '\t')  
+blocked_night_ml_up <- read.delim("Blocked_Night_DE_ML.de.up.txt", sep = '\t')
+blocked_night_fb_dn <- read.delim("Blocked_Night_DE_FB.de.dn.txt", sep = '\t')  
+blocked_night_fb_up <- read.delim("Blocked_Night_DE_FB.de.up.txt", sep = '\t')
+blocked_night_mb_dn <- read.delim("Blocked_Night_DE_MB.de.dn.txt", sep = '\t')  
+blocked_night_mb_up <- read.delim("Blocked_Night_DE_MB.de.up.txt", sep = '\t') 
+
+blocked_morning_fl_dn <- read.delim("Blocked_Morning_DE_FL.de.dn.txt", sep = '\t')  
+blocked_morning_fl_up <- read.delim("Blocked_Morning_DE_FL.de.up.txt", sep = '\t')
+blocked_morning_ml_dn <- read.delim("Blocked_Morning_DE_ML.de.dn.txt", sep = '\t')  
+blocked_morning_ml_up <- read.delim("Blocked_Morning_DE_ML.de.up.txt", sep = '\t')
+blocked_morning_fb_dn <- read.delim("Blocked_Morning_DE_FB.de.dn.txt", sep = '\t')  
+blocked_morning_fb_up <- read.delim("Blocked_Morning_DE_FB.de.up.txt", sep = '\t')
+blocked_morning_mb_dn <- read.delim("Blocked_Morning_DE_MB.de.dn.txt", sep = '\t')  
+blocked_morning_mb_up <- read.delim("Blocked_Morning_DE_MB.de.up.txt", sep = '\t') 
+
+des <- list(blocked_morning_fl_dn,blocked_morning_fl_up,blocked_morning_ml_dn, blocked_morning_ml_up, blocked_night_ml_dn, blocked_night_ml_up, blocked_night_fl_dn, blocked_night_fl_up)
+de_names <- c("morning_fl_dn","morning_fl_up","morning_ml_dn","morning_ml_up","night_ml_dn","night_ml_up","night_fl_dn","night_fl_up")
 
 i = 1
 for(xi in des)
@@ -671,11 +363,12 @@ for(xi in des)
     results_df <- arrange(results_df, p.adjust)
     if(nrow(results_df) > 0)
     {
-      write_delim(results_df,paste0("../data/GOTerms/GOBP_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
+      write_delim(results_df,paste0("GOBP_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
       BP_colors_up=colorRampPalette(brewer.pal(n=9, name="Oranges"))(nrow(results_df))
+      n <- min(nrow(results_df),10)
       #ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(aes(fill = -1 * log10(p.adjust)), color = "black") + ylab("GOTerm") + scale_fill_gradientn(colors = BP_colors_up) + ggtitle(paste("GOBP_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOBP_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggsave(paste0("../data/GOTerms/GOBP_", de_names[i],"_barplot.png"), height = 10, width = 10)
+      ggplot(results_df[1:n,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOBP_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
+      ggsave(paste0("GOBP_", de_names[i],"_barplot.png"), height = 10, width = 10)
     }
   }
   i = i + 1
@@ -694,11 +387,12 @@ for(xi in des)
     results_df <- arrange(results_df, p.adjust)
     if(nrow(results_df) > 0)
     {
-      write_delim(results_df,paste0("../data/GOTerms/GOMF_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
+      write_delim(results_df,paste0("GOMF_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
       BP_colors_up=colorRampPalette(brewer.pal(n=9, name="Blues"))(nrow(results_df))
+      n <- min(nrow(results_df),10)
       #ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(aes(fill = -1 * log10(p.adjust)), color = "black") + ylab("GOTerm") + scale_fill_gradientn(colors = BP_colors_up) + ggtitle(paste("GOBP_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOMF_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggsave(paste0("../data/GOTerms/GOMF_", de_names[i],"_barplot.png"), height = 10, width = 10)
+      ggplot(results_df[1:n,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOMF_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
+      ggsave(paste0("GOMF_", de_names[i],"_barplot.png"), height = 10, width = 10)
     }
   }
   i = i + 1
@@ -719,87 +413,41 @@ for(xi in des)
     results_df <- arrange(results_df, p.adjust)
     if(nrow(results_df) > 0)
     {
-      write_delim(results_df,paste0("../data/GOTerms/GOCC_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
+      write_delim(results_df,paste0("GOCC_", de_names[i],"_results.txt"), delim = '\t', col_names = T)
       BP_colors_up=colorRampPalette(brewer.pal(n=9, name="Greens"))(nrow(results_df))
+      n <- min(nrow(results_df),10)
       #ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(aes(fill = -1 * log10(p.adjust)), color = "black") + ylab("GOTerm") + scale_fill_gradientn(colors = BP_colors_up) + ggtitle(paste("GOBP_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggplot(results_df[1:10,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOCC_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
-      ggsave(paste0("../data/GOTerms/GOCC_", de_names[i],"_barplot.png"), height = 10, width = 10)
+      ggplot(results_df[1:n,], aes(y = reorder(ID, -1 * log10(p.adjust)) ,x = -1 * log10(p.adjust))) + geom_col(color = "black") + ylab("GOTerm") + ggtitle(paste("GOCC_", de_names[i])) + geom_vline(xintercept = -1 * log10(0.05), color = "black")
+      ggsave(paste0("GOCC_", de_names[i],"_barplot.png"), height = 10, width = 10)
     }
     }
   }
   i = i + 1
 }
-
-
 ```
 
-[GOTermResults](https://webfs/n/core/Bioinformatics/analysis/Rohner/as2589/cbio.as2589.102/data/GOTerms)  
-
-
-## Heatmaps
-
-Heatmaps showing the expression levels (cpm) for the differentially expressed genes across the various contrasts. Made using row-scaling
+All DE genes combined:
 
 ```{r eval=F}
-library(pheatmap)
+all_blocked_de <- unique(c(blocked_night_fl_dn$ensid,blocked_night_fl_up$ensid,blocked_night_ml_dn$ensid,blocked_night_ml_up$ensid,blocked_night_fb_dn$ensid,blocked_night_fb_up$ensid,blocked_night_mb_dn$ensid,blocked_night_mb_up$ensid,blocked_morning_fl_dn$ensid,blocked_morning_fl_up$ensid,blocked_morning_ml_dn$ensid,blocked_morning_ml_up$ensid,blocked_morning_fb_dn$ensid,blocked_morning_fb_up$ensid,blocked_morning_mb_dn$ensid,blocked_morning_mb_up$ensid))
 
-fl_71 <- rbind(fl_up_71, fl_dn_71)
-rownames(fl_71) <- fl_71$Name
-png("../data/Heatmaps/MOLNG3971_FemaleLiver_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(fl_71[,c(8:10,14:16)], scale = "row", cluster_cols = F)
-dev.off()
+results <- enrichGO(gene = all_blocked_de, org.Mm.eg.db, keyType = "ENSEMBL", ont = "BP", pAdjustMethod = "BH",pvalueCutoff  = 0.1)
+results_bp <- results@result
+results_bp <- results_bp %>% filter(p.adjust < 0.05)
+results_bp <- arrange(results_bp, p.adjust)
+write_delim(results_bp,"EnrichedGOTerms_BP_AllBlockedDEGenes.txt", delim = '\t', col_names = T)
 
-ml_71 <- rbind(ml_up_71, ml_dn_71)
-rownames(ml_71) <- ml_71$Name
-png("../data/Heatmaps/MOLNG3971_MaleLiver_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(ml_71[,c(11:13,17:18)], scale = "row", cluster_cols = F)
-dev.off()
+results <- enrichGO(gene = all_blocked_de, org.Mm.eg.db, keyType = "ENSEMBL", ont = "MF", pAdjustMethod = "BH",pvalueCutoff  = 0.1)
+results_mf <- results@result
+results_mf <- results_mf %>% filter(p.adjust < 0.05)
+results_mf <- arrange(results_mf, p.adjust)
+write_delim(results_mf,"EnrichedGOTerms_MF_AllBlockedDEGenes.txt", delim = '\t', col_names = T)
 
-fb_71 <- rbind(fb_up_71, fb_dn_71)
-rownames(fb_71) <- fb_71$Name
-png("../data/Heatmaps/MOLNG3971_FemaleBrain_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(fb_71[,c(19:20,23:24)], scale = "row", cluster_rows = F, cluster_cols = F)
-dev.off()
-
-mb_71 <- rbind(mb_up_71, mb_dn_71)
-rownames(mb_71) <- mb_71$Name
-row_sd <- apply(mb_71[,c(21:22,25:26)], 1,sd)
-mb_71 <- mb_71[row_sd > 0,]
-#gene Notumus is DE, but all the CPMS round down to 0 so the SD oif heatmap is 0, which breaks pheatmap, so I dropped it
-png("../data/Heatmaps/MOLNG3971_MaleBrain_DEgene_heatmap.png", height = 1000, width = 1000)
-pheatmap(mb_71[,c(21:22,25:26)], scale = "row", cluster_cols = F)
-dev.off()
-
-
-##############
-fl_85 <- rbind(fl_up_85, fl_dn_85)
-rownames(fl_85) <- fl_85$Name
-png("../data/Heatmaps/MOLNG3985_FemaleLiver_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(fl_85[,c(8:11,14:16)], scale = "row", cluster_cols = F)
-dev.off()
-
-ml_85 <- rbind(ml_up_85, ml_dn_85)
-rownames(ml_85) <- ml_85$Name
-png("../data/Heatmaps/MOLNG3985_MaleLiver_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(ml_85[,c(12:13,17:19)], scale = "row", cluster_cols = F)
-dev.off()
-
-fb_85 <- rbind(fb_up_85, fb_dn_85)
-rownames(fb_85) <- fb_85$Name
-png("../data/Heatmaps/MOLNG3985_FemaleBrain_DEgene_heatmap.png", height = 800, width = 800)
-pheatmap(fb_85[,c(20:23,26:28)], scale = "row", cluster_rows = F, cluster_cols = F)
-dev.off()
-
-
-##### NO DE GENES HERE
-mb_85 <- rbind(mb_up_85, mb_dn_85)
-rownames(mb_85) <- mb_85$Name
-#gene Notumus is DE, but all the CPMS round down to 0 so the SD oif heatmap is 0, which breaks pheatmap, so I dropped it
-png("../data/Heatmaps/MOLNG3985_MaleBrain_DEgene_heatmap.png", height = 1000, width = 1000)
-pheatmap(mb_85[,c(21:22,25:26)], scale = "row", cluster_cols = F)
-dev.off()
-
-
+results <- enrichGO(gene = all_blocked_de, org.Mm.eg.db, keyType = "ENSEMBL", ont = "CC", pAdjustMethod = "BH",pvalueCutoff  = 0.1)
+results_cc <- results@result
+results_cc <- results_cc %>% filter(p.adjust < 0.05)
+results_cc <- arrange(results_cc, p.adjust)
+write_delim(results_cc,"EnrichedGOTerms_CC_AllBlockedDEGenes.txt", delim = '\t', col_names = T)
 ```
 
 
